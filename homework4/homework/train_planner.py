@@ -39,7 +39,7 @@ def train(
 
     model = load_model(model_name)
     model = model.to(device)
-    model.train()
+    model.train()    
     train_data = road_dataset.load_data("drive_data/train", shuffle=True, batch_size=batch_size, num_workers=2, transform_pipeline=transform_pipeline)
     val_data = road_dataset.load_data("drive_data/val", shuffle=False)
 
@@ -63,7 +63,7 @@ def train(
           mask = batch['waypoints_mask'].to(device)
           pred = model(track_left, track_right)
           
-          loss = masked_l1_loss(pred, waypoints, mask) 
+          loss = loss_func(pred, waypoints, mask) 
        
           optimizer.zero_grad()
           loss.backward()

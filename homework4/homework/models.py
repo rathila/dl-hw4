@@ -22,8 +22,9 @@ class MLPPlanner(nn.Module):
       )
       self.relu = torch.nn.ReLU()
      
-    def forward(self, x) -> None:      
-      return self.relu(x + self.model(x))
+    def forward(self, x) -> None: 
+      identity = x     
+      return self.relu(identity + self.model(x))
 
   def __init__(
       self,
@@ -36,17 +37,19 @@ class MLPPlanner(nn.Module):
           n_waypoints (int): number of waypoints to predict
       """
       super().__init__()
-
+      hidden_dim = 128
+      num_of_blocks = 8
       self.n_track = n_track
       self.n_waypoints = n_waypoints
       input_dim = n_track * 2 * 2  # 10 points * 2 lanes * 2 coords (x, y)
-      hidden_dim = 256
+      
       output_dim = n_waypoints * 2  # 3 waypoints * 2 coords
       self.network =  nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
-        torch.nn.ReLU(),
+        nn.LayerNorm(hidden_dim),
+        nn.ReLU(),
         nn.Sequential(
-          *[self.Block(hidden_dim) for _ in range(4)]
+          *[self.Block(hidden_dim) for _ in range(num_of_blocks)]
       )
       ,nn.Linear(hidden_dim, output_dim))
       
@@ -72,11 +75,44 @@ class MLPPlanner(nn.Module):
           torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
       """
       B = track_left.size(0)
-      x = torch.cat([track_left, track_right], dim=2).view(B, -1)  # (B, 40)
+      left_flat = track_left.flatten(start_dim=1)
+      right_flat = track_right.flatten(start_dim=1)
+      x = torch.cat([left_flat, right_flat], dim=1)    
      
       out = self.network (x)
       return out.view(B, -1, 2)  # (B,
 
+def attention_mask(seq_len, learned_embedding:torch.Tensor):
+  # learned_embedding: [embed_o, embed_1......,embed_n]
+  embed = learned_embedding.new_full((*learned_embedding.shape[:-1],
+                                      seq_len,
+                                      seq_len),
+                                     float('-inf'))
+  pos = torch.arange(seq_len)
+  rel_pos = pos[:, None] - pos[None, :]
+  valid_pose = (rel_pos >= 0) & (rel_pos < learned_embedding.shape[-1])
+  embed[..., valid_pose] = learned_embedding[..., rel_pos[valid_pose]]
+  print(embed.shape)
+  return embed
+  
+class TransformerLayer(torch.nn.Module):
+  def __init__(self, embed_dim, num_heads, res_pos_length = 128) -> None:
+    super().__init__()
+    self.res_pos = torch.nn.Parameter(torch.zeros( num_heads, res_pos_length))
+    self.self_att = torch.nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+    self.mlp = torch.nn.Sequential(
+        torch.nn.Linear(embed_dim, 4*embed_dim),
+        torch.nn.ReLU(),
+        torch.nn.Linear(4*embed_dim, embed_dim))
+    self.in_norm = torch.nn.LayerNorm(embed_dim)
+    self.out_norm = torch.nn.LayerNorm(embed_dim)
+  def forward(self, x):
+    x_norm = self.in_norm(x)
+    print(x.shape[0])
+    attn_mask = attention_mask(x.shape[0], self.res_pos)
+    x = x + self.self_att(x_norm,x_norm,x_norm,attn_mask= attn_mask)[0]
+    x = x + self.mlp(self.out_norm(x))
+    return x
 
 class TransformerPlanner(nn.Module):
     def __init__(
@@ -89,8 +125,24 @@ class TransformerPlanner(nn.Module):
 
         self.n_track = n_track
         self.n_waypoints = n_waypoints
-
         self.query_embed = nn.Embedding(n_waypoints, d_model)
+
+        # === Input encoder ===
+        # Each (x, y) → d_model
+        # Input encoder for lane boundaries
+        self.input_embed = nn.Linear(2, d_model)
+
+        # === Transformer Decoder (stacked layers)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=4, batch_first=True,dim_feedforward=256)
+        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=2)
+
+        # self.network = torch.nn.Sequential(
+        # self.query_embed,
+        #   *[TransformerLayer(d_model, 4) for _ in range(4)
+        # ],
+        #  torch.nn.Linear(d_model, 2))
+        # Output projection to (x, y) coordinates
+        self.output_projection = nn.Linear(d_model, 2)
 
     def forward(
         self,
@@ -111,7 +163,24 @@ class TransformerPlanner(nn.Module):
         Returns:
             torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
         """
-        raise NotImplementedError
+        B = track_left.size(0)
+        # === Step 1: Concatenate and embed track boundaries ===
+        track_input = torch.cat([track_left, track_right], dim=1)  # [B, 20, 2]
+        memory = self.input_embed(track_input) 
+
+        # === Step 2: Expand learnable query embeddings ===
+        query_indices = torch.arange(self.n_waypoints, device=track_left.device).unsqueeze(0).repeat(B, 1)  # [B, 3]
+        tgt = self.query_embed(query_indices)     # [B, 3, d_model]
+
+
+        # === Step 3: Transformer Decoder ===
+        output = self.transformer_decoder(tgt=tgt, memory=memory)  # [B, 3, d_model]
+        
+
+        # === Step 4: Project to 2D waypoint coordinates ===
+        waypoints = self.output_projection(output)           
+        
+        return waypoints
 
 
 class CNNPlanner(torch.nn.Module):
