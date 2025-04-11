@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from .models import  load_model, save_model
 from .datasets import road_dataset
-from metrics import PlannerMetric
+from .metrics import PlannerMetric
 
 def train(
     exp_dir: str = "logs",
@@ -15,6 +15,7 @@ def train(
     lr: float = .005,
     batch_size: int = 128,
     seed: int = 2024,
+    transform_pipeline:str ="transform_pipeline",
     **kwargs,
 ):
     if torch.cuda.is_available():
@@ -24,17 +25,17 @@ def train(
     else:
         print("CUDA not available, using CPU")
         device = torch.device("cpu")
-
+    metric = PlannerMetric()
     writer = SummaryWriter(log_dir="logs")
     # set random seed so each run is deterministic
     torch.manual_seed(seed)
     np.random.seed(seed)
-   
-    model = load_model(model_name, in_channels=64)
+
+    model = load_model(model_name)
     model = model.to(device)
     model.train()
-    train_data = road_dataset.load_data("classification_data/train", shuffle=True, batch_size=batch_size, num_workers=2, transform_pipeline="aug")
-    val_data = road_dataset.load_data("classification_data/val", shuffle=False)
+    train_data = road_dataset.load_data("drive_data/train", shuffle=True, batch_size=batch_size, num_workers=2, transform_pipeline=transform_pipeline)
+    val_data = road_dataset.load_data("drive_data/val", shuffle=False)
 
 
     loss_func = torch.nn.CrossEntropyLoss()
@@ -49,18 +50,17 @@ def train(
         
         model.train()
 
-        for img, label in train_data:
-            img, label = img.to(device), label.to(device)
+        for batch in train_data:
+          track_left = batch['track_left']  # (B, 10, 2)
+          track_right = batch['track_right']
+          waypoints = batch['waypoints']
+          mask = batch['waypoints_mask']
 
-            pred_labels = model(img)
-            loss_value = loss_func(pred_labels, label)            
-            optimizer.zero_grad()
-            loss_value.backward()
-            optimizer.step()            
-            #logger.add_scalar('train_loss', loss_value.item(), global_step=global_step)
-            train_accuracy.append((pred_labels.argmax(dim=1) == label).float().mean().item())
-            writer.add_scalar("train/loss", loss_value.item(),global_step)
-            global_step += 1
+               
+          # #logger.add_scalar('train_loss', loss_value.item(), global_step=global_step)
+          # train_accuracy.append((pred_labels.argmax(dim=1) == label).float().mean().item())
+          # writer.add_scalar("train/loss", loss_value.item(),global_step)
+          # global_step += 1
 
         writer.add_scalar("train/accuracy", np.mean(train_accuracy),epoch)
 
@@ -103,6 +103,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_epoch", type=int, default=15)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=2024)
+    parser.add_argument("--transform_pipeline", type=str, default="transform_pipeline")
 
     # optional: additional model hyperparamters
     # parser.add_argument("--num_layers", type=int, default=3)
