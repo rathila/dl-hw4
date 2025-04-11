@@ -10,8 +10,7 @@ from .metrics import PlannerMetric
 
 def masked_l1_loss(pred, target, mask):
     # pred, target: (B, n_waypoints, 2)
-    # mask: (B, n_waypoints)
-    print(f"prd: {pred.shape} lbl:{target.shape} msk {mask.shape}")  # Should be torch.Size([])    
+    # mask: (B, n_waypoints)   
     error = (pred - target).abs()   
     error_masked = error * mask[...,None]
     return error_masked.sum() / mask.sum().clamp(min=1)
@@ -76,7 +75,7 @@ def train(
           # global_step += 1
 
         results = metric.compute()       
-
+        print(f"[Epoch {epoch}] Loss: {loss.item():.4f} ")
         # disable gradient computation and switch to evaluation mode
         with torch.inference_mode():
             model.eval()
@@ -93,8 +92,8 @@ def train(
         val_results = metric.compute()       
          # print on first, last, every 10th epoch
         if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
-             print(f"[Epoch {epoch}] Loss: {loss.item():.4f} | Long Err: {results['longitudinal_error']:.4f} | Lat Err: {results['lateral_error']:.4f}")
-             print(f"[Validation] Longitudinal: {val_results['longitudinal_error']:.3f}, Lateral: {val_results['lateral_error']:.3f}")
+             print(f"[TLong Err: {results['longitudinal_error']:.4f} | Lat Err: {results['lateral_error']:.4f}-[VLong Err: {val_results['longitudinal_error']:.4f} | Lat Err: {val_results['lateral_error']:.4f}")
+          
     # save and overwrite the model in the root directory for grading
     save_model(model)
 
