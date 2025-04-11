@@ -86,6 +86,7 @@ def train(
               track_right = batch['track_right'].to(device)
               waypoints = batch['waypoints'].to(device)
               mask = batch['waypoints_mask'].to(device)
+              pred = model(track_left, track_right)
               loss = loss_func(pred, waypoints, mask)  
               metric.add(pred, waypoints, mask)              
 

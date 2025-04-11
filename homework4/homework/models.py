@@ -46,7 +46,7 @@ class MLPPlanner(nn.Module):
         nn.Linear(input_dim, hidden_dim),
         torch.nn.ReLU(),
         nn.Sequential(
-          *[self.Block(hidden_dim) for _ in range(1)]
+          *[self.Block(hidden_dim) for _ in range(4)]
       )
       ,nn.Linear(hidden_dim, output_dim))
       
