@@ -9,41 +9,73 @@ INPUT_STD = [0.2064, 0.1944, 0.2252]
 
 
 class MLPPlanner(nn.Module):
-    def __init__(
-        self,
-        n_track: int = 10,
-        n_waypoints: int = 3,
-    ):
-        """
-        Args:
-            n_track (int): number of points in each side of the track
-            n_waypoints (int): number of waypoints to predict
-        """
-        super().__init__()
 
-        self.n_track = n_track
-        self.n_waypoints = n_waypoints
+  class Block(torch.nn.Module):
+    def __init__(self, dim, pool=True) -> None:
+      super().__init__()
+      self.model = torch.nn.Sequential(
+          torch.nn.Linear(dim, dim),
+          torch.nn.LayerNorm(dim),
+          torch.nn.ReLU(),
+          torch.nn.Linear(dim, dim),
+          torch.nn.LayerNorm(dim)          
+      )
+      self.relu = torch.nn.ReLU()
+     
+    def forward(self, x) -> None:      
+      return self.relu(x + self.model(x))
 
-    def forward(
-        self,
-        track_left: torch.Tensor,
-        track_right: torch.Tensor,
-        **kwargs,
-    ) -> torch.Tensor:
-        """
-        Predicts waypoints from the left and right boundaries of the track.
+  def __init__(
+      self,
+      n_track: int = 10,
+      n_waypoints: int = 3,
+  ):
+      """
+      Args:
+          n_track (int): number of points in each side of the track
+          n_waypoints (int): number of waypoints to predict
+      """
+      super().__init__()
 
-        During test time, your model will be called with
-        model(track_left=..., track_right=...), so keep the function signature as is.
+      self.n_track = n_track
+      self.n_waypoints = n_waypoints
+      input_dim = n_track * 2 * 2  # 10 points * 2 lanes * 2 coords (x, y)
+      hidden_dim = 256
+      output_dim = n_waypoints * 2  # 3 waypoints * 2 coords
+      self.network =  nn.Sequential(
+        nn.Linear(input_dim, hidden_dim),
+        torch.nn.ReLU(),
+        nn.Sequential(
+          *[self.Block(hidden_dim) for _ in range(1)]
+      )
+      ,nn.Linear(hidden_dim, output_dim))
+      
 
-        Args:
-            track_left (torch.Tensor): shape (b, n_track, 2)
-            track_right (torch.Tensor): shape (b, n_track, 2)
 
-        Returns:
-            torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
-        """
-        raise NotImplementedError
+  def forward(
+      self,
+      track_left: torch.Tensor,
+      track_right: torch.Tensor,
+      **kwargs,
+  ) -> torch.Tensor:
+      """
+      Predicts waypoints from the left and right boundaries of the track.
+
+      During test time, your model will be called with
+      model(track_left=..., track_right=...), so keep the function signature as is.
+
+      Args:
+          track_left (torch.Tensor): shape (b, n_track, 2)
+          track_right (torch.Tensor): shape (b, n_track, 2)
+
+      Returns:
+          torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
+      """
+      B = track_left.size(0)
+      x = torch.cat([track_left, track_right], dim=2).view(B, -1)  # (B, 40)
+     
+      out = self.network (x)
+      return out.view(B, -1, 2)  # (B,
 
 
 class TransformerPlanner(nn.Module):

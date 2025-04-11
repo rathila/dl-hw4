@@ -8,6 +8,13 @@ from .models import  load_model, save_model
 from .datasets import road_dataset
 from .metrics import PlannerMetric
 
+def masked_l1_loss(pred, target, mask):
+    # pred, target: (B, n_waypoints, 2)
+    # mask: (B, n_waypoints)
+    print(f"prd: {pred.shape} lbl:{target.shape} msk {mask.shape}")  # Should be torch.Size([])    
+    error = (pred - target).abs()   
+    error_masked = error * mask[...,None]
+    return error_masked.sum() / mask.sum().clamp(min=1)
 def train(
     exp_dir: str = "logs",
     model_name: str = "classifier",
@@ -38,7 +45,7 @@ def train(
     val_data = road_dataset.load_data("drive_data/val", shuffle=False)
 
 
-    loss_func = torch.nn.CrossEntropyLoss()
+    loss_func = masked_l1_loss
 
     # optimizer = ...
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -51,42 +58,42 @@ def train(
         model.train()
 
         for batch in train_data:
-          track_left = batch['track_left']  # (B, 10, 2)
-          track_right = batch['track_right']
-          waypoints = batch['waypoints']
-          mask = batch['waypoints_mask']
-
-               
+          track_left = batch['track_left'].to(device)  # (B, 10, 2)
+          track_right = batch['track_right'].to(device)
+          waypoints = batch['waypoints'].to(device)
+          mask = batch['waypoints_mask'].to(device)
+          pred = model(track_left, track_right)
+          
+          loss = masked_l1_loss(pred, waypoints, mask) 
+       
+          optimizer.zero_grad()
+          loss.backward()
+          optimizer.step()  
+          metric.add(pred, waypoints, mask) 
           # #logger.add_scalar('train_loss', loss_value.item(), global_step=global_step)
           # train_accuracy.append((pred_labels.argmax(dim=1) == label).float().mean().item())
           # writer.add_scalar("train/loss", loss_value.item(),global_step)
           # global_step += 1
 
-        writer.add_scalar("train/accuracy", np.mean(train_accuracy),epoch)
+        results = metric.compute()       
 
         # disable gradient computation and switch to evaluation mode
         with torch.inference_mode():
             model.eval()
-            val_accuracy = []
-            for img, label in val_data:
-                img, label = img.to(device), label.to(device)
-                pred_test_label = model(img)
-                # TODO: compute validation accuracy
-                val_accuracy.append((pred_test_label.argmax(dim=1) == label).float().mean().item())
+            metric.reset()
+            for batch in train_data:
+              track_left = batch['track_left'].to(device)  # (B, 10, 2)
+              track_right = batch['track_right'].to(device)
+              waypoints = batch['waypoints'].to(device)
+              mask = batch['waypoints_mask'].to(device)
+              loss = loss_func(pred, waypoints, mask)  
+              metric.add(pred, waypoints, mask)              
 
-        # log average train and val accuracy to tensorboard
-            writer.add_scalar("val/accuracy", np.mean(val_accuracy),epoch)
-        epoch_train_acc = torch.as_tensor(train_accuracy).mean()
-        epoch_val_acc = torch.as_tensor(val_accuracy).mean()
+        val_results = metric.compute()       
          # print on first, last, every 10th epoch
         if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
-            print(
-                f"Epoch {epoch + 1:2d} / {num_epoch:2d}: "
-                f"train_acc={epoch_train_acc:.4f} "
-                f"val_acc={epoch_val_acc:.4f}"
-            )
-            torch.save(model.state_dict(), f"epoch_{epoch}.pth")
-
+             print(f"[Epoch {epoch}] Loss: {loss.item():.4f} | Long Err: {results['longitudinal_error']:.4f} | Lat Err: {results['lateral_error']:.4f}")
+             print(f"[Validation] Longitudinal: {val_results['longitudinal_error']:.3f}, Lateral: {val_results['lateral_error']:.3f}")
     # save and overwrite the model in the root directory for grading
     save_model(model)
 
