@@ -53,7 +53,7 @@ def train(
     for epoch in range(num_epoch):
         # clear metrics at beginning of epoch
         train_accuracy = []       
-        
+        running_loss = 0.0
         model.train()
 
         for batch in train_data:
@@ -68,35 +68,46 @@ def train(
           optimizer.zero_grad()
           loss.backward()
           optimizer.step()  
-          metric.add(pred, waypoints, mask) 
+          metric.add(pred, waypoints, mask)
+          running_loss += loss.item() 
           # #logger.add_scalar('train_loss', loss_value.item(), global_step=global_step)
           # train_accuracy.append((pred_labels.argmax(dim=1) == label).float().mean().item())
           # writer.add_scalar("train/loss", loss_value.item(),global_step)
           # global_step += 1
 
-        results = metric.compute()       
-        print(f"[Epoch {epoch}] Loss: {loss.item():.4f} ")
+        results = metric.compute() 
+        avg_train_loss = running_loss / len(train_data)      
+        print(f"[Epoch {epoch}] Loss: {avg_train_loss.item():.4f} ")
         # disable gradient computation and switch to evaluation mode
         with torch.inference_mode():
             model.eval()
             metric.reset()
-            for batch in train_data:
+            val_loss = 0.0
+            for batch in val_data:
               track_left = batch['track_left'].to(device)  # (B, 10, 2)
               track_right = batch['track_right'].to(device)
               waypoints = batch['waypoints'].to(device)
               mask = batch['waypoints_mask'].to(device)
               pred = model(track_left, track_right)
-              loss = loss_func(pred, waypoints, mask)  
+              loss = loss_func(pred, waypoints, mask)
+              val_loss += loss.item()  
               metric.add(pred, waypoints, mask)              
 
-        val_results = metric.compute()       
+        val_results = metric.compute() 
+        avg_val_loss = val_loss / len(val_data) 
+        writer.add_scalar("Loss/Train", avg_train_loss, epoch)
+        writer.add_scalar("Loss/Val", avg_val_loss, epoch)
+        writer.add_scalar("LateralError/Val", val_results["lateral_error"], epoch)
+        writer.add_scalar("LongitudinalError/Val", val_results["longitudinal_error"], epoch)     
          # print on first, last, every 10th epoch
         if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
              print(f"[TLong Err: {results['longitudinal_error']:.4f} | Lat Err: {results['lateral_error']:.4f}-[VLong Err: {val_results['longitudinal_error']:.4f} | Lat Err: {val_results['lateral_error']:.4f}")
+              # === Logging ===
+        
           
     # save and overwrite the model in the root directory for grading
     save_model(model)
-
+    writer.close()
     # save a copy of model weights in the log directory
     #torch.save(model.state_dict(), log_dir / f"{model_name}.th")
     #print(f"Model saved to {log_dir / f'{model_name}.th'}")
