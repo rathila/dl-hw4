@@ -37,7 +37,7 @@ class MLPPlanner(nn.Module):
           n_waypoints (int): number of waypoints to predict
       """
       super().__init__()
-      hidden_dim = 128
+      hidden_dim = 512
       num_of_blocks = 4
       self.n_track = n_track
       self.n_waypoints = n_waypoints
@@ -47,11 +47,14 @@ class MLPPlanner(nn.Module):
       self.network =  nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
         nn.LayerNorm(hidden_dim),
-        nn.ReLU(),
+        nn.ReLU(),        
         nn.Sequential(
-          *[self.Block(hidden_dim) for _ in range(num_of_blocks)]
+          *self.Block(512),
+          *self.Block(256),
+          *self.Block(128),
+
       )
-      ,nn.Linear(hidden_dim, output_dim))
+      ,nn.Linear(128, output_dim))
       
 
 
@@ -77,8 +80,8 @@ class MLPPlanner(nn.Module):
       B = track_left.size(0)
       left_flat = track_left.flatten(start_dim=1)
       right_flat = track_right.flatten(start_dim=1)
-      x = torch.cat([left_flat, right_flat], dim=1)    
-     
+      x = torch.cat([track_left, track_right], dim=2)  #[B,10,4]
+      x = x.view(B, -1)  # [B, 40]
       out = self.network (x)
       return out.view(B, 3, 2)  # (B,
 
