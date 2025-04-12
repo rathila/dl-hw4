@@ -38,7 +38,7 @@ class MLPPlanner(nn.Module):
       """
       super().__init__()
       hidden_dim = 128
-      num_of_blocks = 8
+      num_of_blocks = 4
       self.n_track = n_track
       self.n_waypoints = n_waypoints
       input_dim = n_track * 2 * 2  # 10 points * 2 lanes * 2 coords (x, y)
@@ -80,7 +80,7 @@ class MLPPlanner(nn.Module):
       x = torch.cat([left_flat, right_flat], dim=1)    
      
       out = self.network (x)
-      return out.view(B, -1, 2)  # (B,
+      return out.view(B, 3, 2)  # (B,
 
 
 
