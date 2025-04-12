@@ -37,7 +37,7 @@ class MLPPlanner(nn.Module):
           n_waypoints (int): number of waypoints to predict
       """
       super().__init__()
-      hidden_dim = 512
+      hidden_dim = 64
       num_of_blocks = 4
       self.n_track = n_track
       self.n_waypoints = n_waypoints
@@ -49,12 +49,9 @@ class MLPPlanner(nn.Module):
         nn.LayerNorm(hidden_dim),
         nn.ReLU(),        
         nn.Sequential(
-          *self.Block(512),
-          *self.Block(256),
-          *self.Block(128),
-
+          *[self.Block(hidden_dim) for _ in range(num_of_blocks)]
       )
-      ,nn.Linear(128, output_dim))
+      ,nn.Linear(hidden_dim, output_dim))
       
 
 
@@ -163,29 +160,62 @@ class TransformerPlanner(nn.Module):
 
 
 class CNNPlanner(torch.nn.Module):
-    def __init__(
-        self,
-        n_waypoints: int = 3,
-    ):
+  class Block( torch.nn.Module):
+    def __init__(self, in_channels, out_channels, stride) -> None:
         super().__init__()
+        kernel_size = 3
+        padding = (kernel_size-1)//2
+        self.Conv1 = torch.nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size =kernel_size, padding=padding,stride=stride)
+        self.n1 = torch.nn.GroupNorm(num_groups=1, num_channels=out_channels)
+        self.Conv2 = torch.nn.Conv2d(in_channels=out_channels, out_channels=out_channels,kernel_size =kernel_size, padding=padding,  stride=1)
+        self.n2 = torch.nn.GroupNorm(num_groups=1, num_channels=out_channels)
+        self.ReLU1 = torch.nn.ReLU()
+        self.ReLU2 = torch.nn.ReLU()
+        self.skip = torch.nn.Conv2d(in_channels, out_channels, 1, stride,0) if in_channels != out_channels else torch.nn.Identity()
 
-        self.n_waypoints = n_waypoints
+    def forward(self, x0):
+        x =  self.ReLU1(self.n1(self.Conv1(x0)))
+        x =  self.ReLU2(self.n2(self.Conv2(x)))
+        return self.skip(x0) + x
+  def __init__(
+      self,
+      n_waypoints: int = 3,
+  ):
+      super().__init__()
 
-        self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN), persistent=False)
-        self.register_buffer("input_std", torch.as_tensor(INPUT_STD), persistent=False)
+      self.n_waypoints = n_waypoints
+      in_channels = 128
+      cnn_layers = [
+          torch.nn.Conv2d(3, in_channels, kernel_size=11, padding=5, bias=False, stride=2) ,
+          torch.nn.ReLU()
+      ]
+      c1 = in_channels
+      for _ in  range(2):
+          c2 =c1 *2
+          cnn_layers.append(self.Block(in_channels=c1, out_channels=c2,  stride=2))
+          c1= c2
+      
 
-    def forward(self, image: torch.Tensor, **kwargs) -> torch.Tensor:
-        """
-        Args:
-            image (torch.FloatTensor): shape (b, 3, h, w) and vals in [0, 1]
+       # Final conv to produce (B, n_waypoints * 2, H, W) → we need 1x1 feature map
+      cnn_layers.append(nn.AdaptiveAvgPool2d((1, 1)))  # (B, C, 1, 1)
+      cnn_layers.append(nn.Conv2d(c1, n_waypoints * 2, kernel_size=1))  # (B, n*2, 1, 1)
+      self.network = torch.nn.Sequential(*cnn_layers)
 
-        Returns:
-            torch.FloatTensor: future waypoints with shape (b, n, 2)
-        """
-        x = image
-        x = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
+      self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN), persistent=False)
+      self.register_buffer("input_std", torch.as_tensor(INPUT_STD), persistent=False)
 
-        raise NotImplementedError
+  def forward(self, image: torch.Tensor, **kwargs) -> torch.Tensor:
+      """
+      Args:
+          image (torch.FloatTensor): shape (b, 3, h, w) and vals in [0, 1]
+
+      Returns:
+          torch.FloatTensor: future waypoints with shape (b, n, 2)
+      """
+      x = image
+      x = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
+      out = self.network(x).view(x.shape[0], self.n_waypoints, 2)  # (B, n_waypoints, 2)      
+      return out
 
 
 MODEL_FACTORY = {
@@ -203,8 +233,9 @@ def load_model(
     """
     Called by the grader to load a pre-trained model by name
     """
+    
     m = MODEL_FACTORY[model_name](**model_kwargs)
-
+    
     if with_weights:
         model_path = HOMEWORK_DIR / f"{model_name}.th"
         assert model_path.exists(), f"{model_path.name} not found"

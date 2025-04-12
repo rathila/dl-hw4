@@ -61,7 +61,12 @@ def train(
           track_right = batch['track_right'].to(device)
           waypoints = batch['waypoints'].to(device)
           mask = batch['waypoints_mask'].to(device)
-          pred = model(track_left, track_right)
+          img = batch['image'].to(device)
+          if model_name == "cnn_planner":
+            pred = model(img)
+          else:
+            pred = model(track_left, track_right)
+          
           
           loss = loss_func(pred, waypoints, mask) 
        
@@ -88,7 +93,11 @@ def train(
               track_right = batch['track_right'].to(device)
               waypoints = batch['waypoints'].to(device)
               mask = batch['waypoints_mask'].to(device)
-              pred = model(track_left, track_right)
+              img = batch['image'].to(device)
+              if model_name == "cnn_planner":
+                pred = model(img)
+              else:
+                pred = model(track_left, track_right)
               loss = loss_func(pred, waypoints, mask)
               val_loss += loss.item()  
               metric.add(pred, waypoints, mask)              
