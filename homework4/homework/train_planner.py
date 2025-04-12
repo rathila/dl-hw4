@@ -77,7 +77,7 @@ def train(
 
         results = metric.compute() 
         avg_train_loss = running_loss / len(train_data)      
-        print(f"[Epoch {epoch}] Loss: {avg_train_loss.item():.4f} ")
+        print(f"[Epoch {epoch}] Loss: {avg_train_loss:.4f} ")
         # disable gradient computation and switch to evaluation mode
         with torch.inference_mode():
             model.eval()
